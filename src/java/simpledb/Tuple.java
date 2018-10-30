@@ -1,9 +1,10 @@
 package simpledb;
 
 import java.io.Serializable;
+import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 import java.util.stream.Collectors;
-import java.util.Iterator;
 
 /**
  * Tuple maintains information about the contents of a tuple. Tuples have a
@@ -27,6 +28,10 @@ public class Tuple implements Serializable {
     public Tuple(TupleDesc td) {
         // some code goes here
         this.td = td;
+        fields = new ArrayList<Field>();
+        for (int i = 0; i < td.numFields(); i++) {
+            fields.add(null);
+        }
     }
 
     /**
