@@ -15,6 +15,10 @@ import java.util.*;
  */
 public class HeapFile implements DbFile {
 
+    private File f;
+    private TupleDesc td;
+    private RandomAccessFile raf;
+
     /**
      * Constructs a heap file backed by the specified file.
      * 
@@ -24,6 +28,13 @@ public class HeapFile implements DbFile {
      */
     public HeapFile(File f, TupleDesc td) {
         // some code goes here
+        this.f = f;
+        this.td = td;
+        try {
+            raf = new RandomAccessFile(f, "rw");
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
     }
 
     /**
@@ -33,7 +44,7 @@ public class HeapFile implements DbFile {
      */
     public File getFile() {
         // some code goes here
-        return null;
+        return f;
     }
 
     /**
@@ -47,7 +58,7 @@ public class HeapFile implements DbFile {
      */
     public int getId() {
         // some code goes here
-        throw new UnsupportedOperationException("implement this");
+        return f.getAbsoluteFile().hashCode();
     }
 
     /**
@@ -57,13 +68,25 @@ public class HeapFile implements DbFile {
      */
     public TupleDesc getTupleDesc() {
         // some code goes here
-        throw new UnsupportedOperationException("implement this");
+        return td;
     }
 
     // see DbFile.java for javadocs
     public Page readPage(PageId pid) {
         // some code goes here
-        return null;
+        Page page = null;
+        int pageSize = BufferPool.getPageSize();
+        long offset = pid.getPageNumber() * pageSize;
+        try {
+            raf.seek(offset);
+            byte data[] = new byte[pageSize];
+            raf.read(data);
+            HeapPageId pgid = new HeapPageId(pid.getTableId(), pid.getPageNumber());
+            page = new HeapPage(pgid, data);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return page;
     }
 
     // see DbFile.java for javadocs
@@ -77,7 +100,14 @@ public class HeapFile implements DbFile {
      */
     public int numPages() {
         // some code goes here
-        return 0;
+        int num = -1;
+        try {
+            num = (int) raf.length() / BufferPool.getPageSize();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+        return num;
     }
 
     // see DbFile.java for javadocs
@@ -96,11 +126,70 @@ public class HeapFile implements DbFile {
         // not necessary for lab1
     }
 
+
     // see DbFile.java for javadocs
     public DbFileIterator iterator(TransactionId tid) {
         // some code goes here
+        return new HeapFileIterator(this, tid);
+    }
+}
+
+class HeapFileIterator extends AbstractDbFileIterator {
+
+    private TransactionId tid;
+    private HeapFile f;
+    private int pgno;
+    private Iterator<Tuple> pgit;
+
+    public HeapFileIterator(HeapFile f, TransactionId tid) {
+        this.tid = tid;
+        this.f = f;
+        pgno = 0;
+    }
+
+    // creates a tuple iterator for a given page 
+    private Iterator<Tuple> pageIterator(int pgno) throws DbException, TransactionAbortedException {
+        PageId pid = new HeapPageId(f.getId(), pgno);
+        Page page = Database.getBufferPool().getPage(tid, pid, Permissions.READ_WRITE);
+        // couldn't read more page from BufferPool
+        if (page == null) {
+            return null;
+        }
+
+        // explicitly downcast
+        HeapPage hp = (HeapPage) page;
+        return hp.iterator();
+    }
+
+    public void open() throws DbException, TransactionAbortedException {
+        pgno = 0;
+        pgit = pageIterator(pgno);
+    }
+
+    public Tuple readNext() throws DbException, TransactionAbortedException {
+        while (pgit != null) {
+            if (pgit.hasNext()) {
+                return pgit.next();
+            }
+
+            pgno++;
+            if (pgno >= f.numPages()) {
+                return null;
+            }
+
+            pgit = pageIterator(pgno);
+        }
+
         return null;
     }
 
-}
+    public void rewind() throws DbException, TransactionAbortedException {
+        close();
+        open();
+    }
 
+    public void close() {
+        super.close();
+        pgit = null;
+    }
+}

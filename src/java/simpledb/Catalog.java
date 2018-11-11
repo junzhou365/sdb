@@ -106,12 +106,20 @@ public class Catalog {
      */
     public DbFile getDatabaseFile(int tableid) throws NoSuchElementException {
         // some code goes here
-        return tables.get(tableid).file;
+        Table table = tables.get(tableid);
+        if (table == null)
+            throw new NoSuchElementException(String.format("No Such tableid %d", tableid));
+
+        return table.file;
     }
 
     public String getPrimaryKey(int tableid) {
         // some code goes here
-        return tables.get(tableid).pkeyField;
+        Table table = tables.get(tableid);
+        if (table == null)
+            return null;
+
+        return table.pkeyField;
     }
 
     public Iterator<Integer> tableIdIterator() {
@@ -121,7 +129,11 @@ public class Catalog {
 
     public String getTableName(int id) {
         // some code goes here
-        return tables.get(id).name;
+        Table table = tables.get(id);
+        if (table == null)
+            return null;
+
+        return table.name;
     }
     
     /** Delete all tables from the catalog */

@@ -22,7 +22,7 @@ public class BufferPool {
     private static int pageSize = DEFAULT_PAGE_SIZE;
 
     private int numPages;
-    private ConcurrentHashMap<PageId, DbFile> filesMap;
+    private ConcurrentHashMap<PageId, Page> pageMap;
      
     /** Default number of pages passed to the constructor. This is used by
     other classes. BufferPool should use the numPages argument to the
@@ -37,6 +37,7 @@ public class BufferPool {
     public BufferPool(int numPages) {
         // some code goes here
         this.numPages = numPages;
+        pageMap = new ConcurrentHashMap<PageId, Page>();
     }
     
     public static int getPageSize() {
@@ -71,17 +72,26 @@ public class BufferPool {
     public  Page getPage(TransactionId tid, PageId pid, Permissions perm)
         throws TransactionAbortedException, DbException {
         // some code goes here
+        if (pageMap.contains(pid)) {
+            return pageMap.get(pid);
+        }
+
         if (numPages == 0) {
             throw new DbException("no available pages");
         }
 
-        if (!filesMap.containsKey(pid)) {
-            // TODO: create a new page
+        int tableid = pid.getTableId();
+        Catalog catalog = Database.getCatalog();
+        DbFile df = catalog.getDatabaseFile(tableid);
+        Page page = df.readPage(pid);
+        if (page == null) {
             return null;
         }
 
         numPages--;
-        return filesMap.get(pid).readPage(pid);
+        pageMap.put(pid, page);
+
+        return page;
     }
 
     /**
