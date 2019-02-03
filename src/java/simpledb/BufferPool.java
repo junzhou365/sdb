@@ -158,10 +158,18 @@ public class BufferPool {
         throws DbException, IOException, TransactionAbortedException {
         // some code goes here
         // not necessary for lab1
-        ArrayList<Page> pages = Database.getCatalog().getDatabaseFile(tableId).insertTuple(tid, t);
+        ArrayList<Page> pages =
+            Database.getCatalog().getDatabaseFile(tableId).insertTuple(tid, t);
+
         for (int i = 0; i < pages.size(); i++) {
             Page page = pages.get(i);
             page.markDirty(true, tid);
+            if (!pageMap.containsKey(page.getId())) {
+                if (numPages == 0) {
+                    throw new DbException("no available pages");
+                }
+                numPages--;
+            }
             // Overwrite any existing pages
             pageMap.put(page.getId(), page);
         }
