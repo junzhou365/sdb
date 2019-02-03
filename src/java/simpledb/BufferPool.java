@@ -77,8 +77,8 @@ public class BufferPool {
             return pageMap.get(pid);
         }
 
-        if (numPages == 0) {
-            throw new DbException("no available pages");
+        if (pageMap.size() == numPages) {
+            evictPage();
         }
 
         int tableid = pid.getTableId();
@@ -89,7 +89,6 @@ public class BufferPool {
             return null;
         }
 
-        numPages--;
         pageMap.put(pid, page);
 
         return page;
@@ -165,10 +164,9 @@ public class BufferPool {
             Page page = pages.get(i);
             page.markDirty(true, tid);
             if (!pageMap.containsKey(page.getId())) {
-                if (numPages == 0) {
-                    throw new DbException("no available pages");
+                if (pageMap.size() == numPages) {
+                    evictPage();
                 }
-                numPages--;
             }
             // Overwrite any existing pages
             pageMap.put(page.getId(), page);
@@ -204,7 +202,9 @@ public class BufferPool {
     public synchronized void flushAllPages() throws IOException {
         // some code goes here
         // not necessary for lab1
-
+        for (ConcurrentHashMap.Entry<PageId, Page> entry: pageMap.entrySet()) {
+            flushPage(entry.getKey());
+        }
     }
 
     /** Remove the specific page id from the buffer pool.
@@ -218,6 +218,7 @@ public class BufferPool {
     public synchronized void discardPage(PageId pid) {
         // some code goes here
         // not necessary for lab1
+        pageMap.remove(pid);
     }
 
     /**
@@ -227,6 +228,16 @@ public class BufferPool {
     private synchronized  void flushPage(PageId pid) throws IOException {
         // some code goes here
         // not necessary for lab1
+        if (!pageMap.containsKey(pid))
+            return;
+
+        Page page = pageMap.get(pid);
+        if (page.isDirty() == null)
+            return;
+
+        Catalog catalog = Database.getCatalog();
+        DbFile df = catalog.getDatabaseFile(pid.getTableId());
+        df.writePage(page);
     }
 
     /** Write all pages of the specified transaction to disk.
@@ -243,6 +254,14 @@ public class BufferPool {
     private synchronized  void evictPage() throws DbException {
         // some code goes here
         // not necessary for lab1
+        PageId pid = pageMap.keys().nextElement();
+        try {
+            flushPage(pid);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
+        discardPage(pid);
     }
 
 }
