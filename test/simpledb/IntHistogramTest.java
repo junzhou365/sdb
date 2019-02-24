@@ -49,11 +49,11 @@ public class IntHistogramTest {
 			h.addValue(c);
 			h.estimateSelectivity(Op.EQUALS, c);
 		}
-		
+
 		// Even with just 10 bins and 50 values,
 		// the selectivity for this particular value should be at most 0.2.
 		Assert.assertTrue(h.estimateSelectivity(Op.EQUALS, -33) < 0.3);
-		
+
 		// And it really shouldn't be 0.
 		// Though, it could easily be as low as 0.02, seeing as that's
 		// the fraction of elements that actually are equal to -33.

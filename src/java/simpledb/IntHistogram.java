@@ -1,8 +1,21 @@
 package simpledb;
 
+import java.util.ArrayList;
+import java.util.Arrays;
+
+import jdk.internal.dynalink.support.BottomGuardingDynamicLinker;
+
 /** A class to represent a fixed-width histogram over a single integer-based field.
  */
 public class IntHistogram {
+    private int[] buckets;
+    private int bucketWidth;
+    private int bucketStart;
+    private int bucketEnd;
+
+    private int min;
+    private int max;
+    private int total;
 
     /**
      * Create a new IntHistogram.
@@ -21,7 +34,16 @@ public class IntHistogram {
      * @param max The maximum integer value that will ever be passed to this class for histogramming
      */
     public IntHistogram(int buckets, int min, int max) {
-    	// some code goes here
+        // some code goes here
+        bucketStart = min;
+        int totalBuckets = buckets;
+        bucketWidth = (int) Math.ceil((double) (max - min + 1) / (double) totalBuckets);
+        this.buckets = new int[totalBuckets];
+        bucketEnd = bucketStart + bucketWidth * totalBuckets;
+        total = 0;
+
+        this.min = min;
+        this.max = max;
     }
 
     /**
@@ -29,7 +51,48 @@ public class IntHistogram {
      * @param v Value to add to the histogram
      */
     public void addValue(int v) {
-    	// some code goes here
+        // some code goes here
+        if (v < min)
+            v = min;
+        if (v > max)
+            v = max;
+        
+        buckets[bucketIndex(v)]++;
+        total++;
+    }
+
+    private int bucketIndex(int v) {
+        return (v - bucketStart) / bucketWidth;
+    }
+
+    private int bucketOffset(int v) {
+        return (v - bucketStart) % bucketWidth;
+    }
+
+    private double bucketEqual(int v) {
+        if (v > bucketEnd || v < bucketStart)
+            return 0;
+
+        double sf = buckets[bucketIndex(v)] / (double) (bucketWidth * total);
+        return sf;
+    }
+
+    private double bucketRange(int start, int end) {
+        if (start < bucketStart)
+            start = bucketStart;
+        if (end >= bucketEnd)
+            end = bucketEnd;
+
+        if (start >= end)
+            return 0;
+
+
+        int bi = bucketIndex(start);
+        int bo = bucketOffset(start);
+
+        double sf = buckets[bi] * (bucketWidth - bo) / (double) (bucketWidth * total);
+        
+        return sf + bucketRange(start + (bucketWidth - bo), end);
     }
 
     /**
@@ -43,9 +106,30 @@ public class IntHistogram {
      * @return Predicted selectivity of this particular operator and value
      */
     public double estimateSelectivity(Predicate.Op op, int v) {
-
-    	// some code goes here
-        return -1.0;
+        // some code goes here
+        double sf = -1.0;
+        switch (op) {
+        case EQUALS:
+            sf = bucketEqual(v);
+            break;
+        case NOT_EQUALS:
+            sf = 1 - bucketEqual(v);
+            break;
+        case GREATER_THAN:
+            sf = bucketRange(v, bucketEnd);
+            break;
+        case GREATER_THAN_OR_EQ:
+            sf = bucketRange(v, bucketEnd) + bucketEqual(v);
+            break;
+        case LESS_THAN:
+            sf = bucketRange(bucketStart, v);
+            break;
+        case LESS_THAN_OR_EQ:
+            sf = bucketRange(bucketStart, v) + bucketEqual(v);
+            break;
+        }
+        
+        return sf;
     }
     
     /**
@@ -59,7 +143,7 @@ public class IntHistogram {
     public double avgSelectivity()
     {
         // some code goes here
-        return 1.0;
+        return -1;
     }
     
     /**
@@ -67,6 +151,6 @@ public class IntHistogram {
      */
     public String toString() {
         // some code goes here
-        return null;
+        return String.format("total: %d, buckets: %s", total, Arrays.toString(buckets));
     }
 }
