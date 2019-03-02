@@ -174,4 +174,30 @@ public class IntHistogramTest {
 		Assert.assertTrue(h.estimateSelectivity(Op.NOT_EQUALS, 3) < 0.001);
 		Assert.assertTrue(h.estimateSelectivity(Op.NOT_EQUALS, 8) > 0.01);
 	}
+
+	@Test public void opGreatEquTest() {
+		IntHistogram h = new IntHistogram(10, 0, 9);
+		
+		// Set some values
+		for (int i = 0; i < 10; i++) {
+			int v = i*(i+2) % 10;
+			h.addValue(v);
+		}
+
+		// Be conservative in case of alternate implementations
+		Assert.assertEquals(1.00, h.estimateSelectivity(Op.GREATER_THAN_OR_EQ, -1), 0.01);
+		Assert.assertEquals(1.00, h.estimateSelectivity(Op.GREATER_THAN_OR_EQ, 0), 0.01);
+	}
+
+	@Test public void withinBucketTest() {
+		IntHistogram h = new IntHistogram(1, 0, 9);
+		
+		// Set some values
+		for (int i = 0; i < 10; i++) {
+			h.addValue(i);
+		}
+
+		// Be conservative in case of alternate implementations
+		Assert.assertEquals(0.50, h.estimateSelectivity(Op.LESS_THAN_OR_EQ, 4), 0.01);
+	}
 }

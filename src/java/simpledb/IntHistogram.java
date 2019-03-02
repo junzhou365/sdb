@@ -77,23 +77,35 @@ public class IntHistogram {
         return sf;
     }
 
-    private double bucketRange(int start, int end) {
-        if (start < bucketStart)
-            start = bucketStart;
-        if (end >= bucketEnd)
-            end = bucketEnd;
-
-        if (start >= end)
+    // start is inclusive
+    // end is exclusive
+    private double bucketRangeRecur(int start, int size) {
+        if (size == 0)
             return 0;
-
 
         int bi = bucketIndex(start);
         int bo = bucketOffset(start);
 
-        double sf = buckets[bi] * (bucketWidth - bo) / (double) (bucketWidth * total);
+        int bend = Math.min(size, bucketWidth);
+
+        double sf = buckets[bi] * (bend - bo) / (double) (bucketWidth * total);
         
-        return sf + bucketRange(start + (bucketWidth - bo), end);
+        return sf + bucketRangeRecur(start + (bend - bo), size - bend);
     }
+
+    private double bucketRange(int start, int end) {
+        if (start < bucketStart)
+            start = bucketStart;
+        if (start > bucketEnd)
+            start = bucketEnd;
+        if (end < bucketStart)
+            end = bucketStart;
+        if (end >= bucketEnd)
+            end = bucketEnd;
+
+        return bucketRangeRecur(start, end - start);
+    }
+    
 
     /**
      * Estimate the selectivity of a particular predicate and operand on this table.
@@ -116,16 +128,16 @@ public class IntHistogram {
             sf = 1 - bucketEqual(v);
             break;
         case GREATER_THAN:
-            sf = bucketRange(v, bucketEnd);
+            sf = bucketRange(v+1, bucketEnd);
             break;
         case GREATER_THAN_OR_EQ:
-            sf = bucketRange(v, bucketEnd) + bucketEqual(v);
+            sf = bucketRange(v, bucketEnd);
             break;
         case LESS_THAN:
             sf = bucketRange(bucketStart, v);
             break;
         case LESS_THAN_OR_EQ:
-            sf = bucketRange(bucketStart, v) + bucketEqual(v);
+            sf = bucketRange(bucketStart, v+1);
             break;
         }
         
