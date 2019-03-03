@@ -111,7 +111,7 @@ public class JoinOptimizer {
             // HINT: You may need to use the variable "j" if you implemented
             // a join algorithm that's more complicated than a basic
             // nested-loops join.
-            return -1.0;
+            return cost1 + card1 * cost2 + card1 * card2;
         }
     }
 
@@ -157,7 +157,18 @@ public class JoinOptimizer {
             Map<String, Integer> tableAliasToId) {
         int card = 1;
         // some code goes here
-        return card <= 0 ? 1 : card;
+        if (joinOp == Predicate.Op.EQUALS) {
+            if (t1pkey) {
+                card = card2;
+            } else if (t2pkey) {
+                card = card1;
+            } else {
+                card = Math.max(card1, card2);
+            } 
+        } else {
+            card = (int) (card1 * card2 * 0.3);
+        }
+        return card;
     }
 
     /**
@@ -220,8 +231,32 @@ public class JoinOptimizer {
         //Not necessary for labs 1--3
 
         // some code goes here
-        //Replace the following
-        return joins;
+        PlanCache pc = new PlanCache();
+        for (int i = 1; i <= joins.size(); i++) {
+            for (Set<LogicalJoinNode> iSet: enumerateSubsets(joins, i)) {
+                CostCard bcSoFar = null;
+                for (LogicalJoinNode toRemove: iSet) {
+                    double prevCost = Double.MAX_VALUE;
+                    if (bcSoFar != null) {
+                        prevCost = bcSoFar.cost;
+                    }
+                    CostCard cc = computeCostAndCardOfSubplan(
+                        stats, filterSelectivities, toRemove, iSet, prevCost, pc);
+                    if (cc != null) {
+                        bcSoFar = cc;
+                    }
+                }
+                if (bcSoFar != null) {
+                    pc.addPlan(iSet, bcSoFar.cost, bcSoFar.card, bcSoFar.plan);
+                }
+            }
+        }
+
+        Vector<LogicalJoinNode> joinPlan = pc.getOrder(new HashSet<LogicalJoinNode>(joins));
+        if (explain) {
+            printJoins(joinPlan, pc, stats, filterSelectivities);
+        }
+        return joinPlan;
     }
 
     // ===================== Private Methods =================================
