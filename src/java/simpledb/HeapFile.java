@@ -191,7 +191,7 @@ class HeapFileIterator extends AbstractDbFileIterator {
     // creates a tuple iterator for a given page 
     private Iterator<Tuple> pageIterator(int pgno) throws DbException, TransactionAbortedException {
         PageId pid = new HeapPageId(f.getId(), pgno);
-        Page page = Database.getBufferPool().getPage(tid, pid, Permissions.READ_WRITE);
+        Page page = Database.getBufferPool().getPage(tid, pid, Permissions.READ_ONLY);
         // couldn't read more page from BufferPool
         if (page == null) {
             return null;

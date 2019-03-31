@@ -2,8 +2,14 @@ package simpledb;
 
 import java.io.*;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 /**
  * BufferPool manages the reading and writing of pages into memory from
@@ -24,12 +30,14 @@ public class BufferPool {
 
     private int numPages;
     private ConcurrentHashMap<PageId, Page> pageMap;
-     
+
     /** Default number of pages passed to the constructor. This is used by
     other classes. BufferPool should use the numPages argument to the
     constructor instead. */
     public static final int DEFAULT_PAGES = 50;
-
+    
+    private LockManager lockmngr;
+    
     /**
      * Creates a BufferPool that caches up to numPages pages.
      *
@@ -39,6 +47,7 @@ public class BufferPool {
         // some code goes here
         this.numPages = numPages;
         pageMap = new ConcurrentHashMap<PageId, Page>();
+        lockmngr = new LockManager();
     }
     
     public static int getPageSize() {
@@ -73,6 +82,8 @@ public class BufferPool {
     public  Page getPage(TransactionId tid, PageId pid, Permissions perm)
         throws TransactionAbortedException, DbException {
         // some code goes here
+        lockmngr.acquire(pid, tid, perm);
+        
         if (pageMap.containsKey(pid)) {
             return pageMap.get(pid);
         }
@@ -106,6 +117,7 @@ public class BufferPool {
     public  void releasePage(TransactionId tid, PageId pid) {
         // some code goes here
         // not necessary for lab1|lab2
+        lockmngr.release(pid, tid);
     }
 
     /**
@@ -122,7 +134,7 @@ public class BufferPool {
     public boolean holdsLock(TransactionId tid, PageId p) {
         // some code goes here
         // not necessary for lab1|lab2
-        return false;
+        return lockmngr.hasLock(p, tid);
     }
 
     /**
@@ -191,7 +203,19 @@ public class BufferPool {
         // some code goes here
         // not necessary for lab1
         PageId pid = t.getRecordId().getPageId();
-        Database.getCatalog().getDatabaseFile(pid.getTableId()).deleteTuple(tid, t);
+        ArrayList<Page> pages = Database.getCatalog().getDatabaseFile(pid.getTableId()).deleteTuple(tid, t);
+
+        for (int i = 0; i < pages.size(); i++) {
+            Page page = pages.get(i);
+            page.markDirty(true, tid);
+            if (!pageMap.containsKey(page.getId())) {
+                if (pageMap.size() == numPages) {
+                    evictPage();
+                }
+            }
+            // Overwrite any existing pages
+            pageMap.put(page.getId(), page);
+        }
     }
 
     /**
@@ -245,6 +269,7 @@ public class BufferPool {
     public synchronized  void flushPages(TransactionId tid) throws IOException {
         // some code goes here
         // not necessary for lab1|lab2
+        throw new Error("not implemented");
     }
 
     /**
@@ -264,4 +289,125 @@ public class BufferPool {
         discardPage(pid);
     }
 
+}
+class LockManager {
+
+    class Latch {
+        PageId pid;
+        TransactionId writer;
+        HashSet<TransactionId> readers;
+
+        boolean debug;
+
+        Latch(PageId pid) {
+            this.pid = pid;
+            readers = new HashSet<>();
+        }
+
+        private void log(TransactionId tid, int type, boolean toAcquire) {
+            if (!debug) {
+                return;
+            }
+
+            String lockType = "";
+            switch (type) {
+            case 0:
+                lockType = "exclusive lock";
+                break;
+            case 1:
+                lockType = "shared lock";
+                break;
+            case 2:
+                lockType = "upgrade lock";
+                break;
+            }
+
+            if (toAcquire) {
+                System.out.printf("acquired %s on pid:%s for tid:%d\n", lockType, pid, tid.getId());
+            } else {
+                System.out.printf("released %s on pid:%s for tid:%d\n", lockType, pid, tid.getId());
+            }
+        }
+
+        private synchronized boolean acquire(TransactionId tid, boolean exclusive) {
+            if (exclusive && readers.size() == 0 && writer == null) {
+                writer = tid;
+                log(tid, 0, true);
+                return true;
+            }
+
+            if (exclusive && writer == null && readers.size() == 1 && readers.contains(tid)) {
+                writer = tid;
+                readers.clear();
+                log(tid, 2, true);
+                return true;
+            }
+
+            if (!exclusive && writer == null) {
+                readers.add(tid);
+                log(tid, 1, true);
+                return true;
+            }
+
+            // reentrant
+            if (writer != null && writer.equals(tid) || readers.contains(tid)) {
+                return true;
+            }
+
+            return false;
+        }
+
+        synchronized boolean release(TransactionId tid) {
+            if (writer != null && writer.equals((tid))) {
+                writer = null;
+                log(tid, 0, false);
+                return true;
+            }
+
+            if (readers.contains(tid)) {
+                readers.remove(tid);
+                log(tid, 1, false);
+                return true;
+            }
+
+            return false;
+        }
+
+        synchronized boolean hasLock(TransactionId tid) {
+            return writer != null && writer.equals(tid) || readers.contains(tid);
+        }
+    }
+
+    private HashMap<PageId, Latch> latches;
+
+    LockManager() {
+        latches = new HashMap<>();
+    }
+
+    void acquire(PageId pid, TransactionId tid, Permissions perm) {
+        while (!tryAcquire(pid, tid, perm)) {
+
+            // System.out.printf("pid:%s, tid:%d, perm:%s contending\n", pid, tid.getId(), perm);
+            try {
+                Thread.sleep(10);
+            } catch (InterruptedException e) {
+                // just tryAcquire again
+            }
+        }
+    }
+
+    synchronized boolean tryAcquire(PageId pid, TransactionId tid, Permissions perm) {
+        latches.putIfAbsent(pid, new Latch(pid));
+        return latches.get(pid).acquire(tid, perm == Permissions.READ_WRITE);
+     }
+
+    synchronized boolean release(PageId pid, TransactionId tid) {
+        latches.putIfAbsent(pid, new Latch(pid));
+        return latches.get(pid).release(tid);
+    }
+
+    synchronized boolean hasLock(PageId pid, TransactionId tid) {
+        latches.putIfAbsent(pid, new Latch(pid));
+        return latches.get(pid).hasLock(tid);
+    }
 }
