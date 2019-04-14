@@ -18,6 +18,8 @@ public class HeapFile implements DbFile {
     private File f;
     private TupleDesc td;
     private RandomAccessFile raf;
+    private int pages;
+
     /**
      * Constructs a heap file backed by the specified file.
      * 
@@ -34,9 +36,11 @@ public class HeapFile implements DbFile {
         } catch (Exception e) {
             e.printStackTrace();
         }
+
+        pages = getDiskNumPages();
     }
 
-    private int getNumPages() {
+    private int getDiskNumPages() {
         int num = -1;
         try {
             num = (int) Math.ceil(raf.length() / (double) BufferPool.getPageSize());
@@ -87,12 +91,17 @@ public class HeapFile implements DbFile {
         Page page = null;
         int pageSize = BufferPool.getPageSize();
         long offset = pid.getPageNumber() * pageSize;
+        
         try {
-            raf.seek(offset);
-            byte data[] = new byte[pageSize];
-            raf.read(data);
             HeapPageId pgid = new HeapPageId(pid.getTableId(), pid.getPageNumber());
-            page = new HeapPage(pgid, data);
+            if (offset == raf.length()) {
+                page = new HeapPage(pgid, HeapPage.createEmptyPageData());
+            } else {
+                raf.seek(offset);
+                byte data[] = new byte[pageSize];
+                raf.read(data);
+                page = new HeapPage(pgid, data);
+            }
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -108,6 +117,9 @@ public class HeapFile implements DbFile {
         try {
             raf.seek(offset);
             raf.write(page.getPageData());
+            // increase the pages if the input page is not included in the memory
+            // pageno starts with zero
+            pages = Math.max(pages, page.getId().getPageNumber() + 1);
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -118,7 +130,9 @@ public class HeapFile implements DbFile {
      */
     public int numPages() {
         // some code goes here
-        return getNumPages();
+        // Memory may have some pages unflushed
+        // Disk may have lots of data that has been loaded.
+        return Math.max(pages, getDiskNumPages());
     }
 
     // see DbFile.java for javadocs
@@ -129,7 +143,6 @@ public class HeapFile implements DbFile {
         HeapPageId pid = null;
         HeapPage p = null;
         int i = 0;
-        int pages = getNumPages();
         for (; i < pages; i++) {
             pid = new HeapPageId(getId(), i);
             p = (HeapPage) Database.getBufferPool().getPage(tid, pid, Permissions.READ_WRITE);
@@ -143,12 +156,11 @@ public class HeapFile implements DbFile {
         // No pages are available
         if (i == pages) {
             pid = new HeapPageId(getId(), i);
-            // create an empty page
-            p = new HeapPage(pid, HeapPage.createEmptyPageData());
+            p = (HeapPage) Database.getBufferPool().getPage(tid, pid, Permissions.READ_WRITE);
             p.insertTuple(t);
+            pages++;
         }
 
-        writePage(p);
         ArrayList<Page> l = new ArrayList<>();
         l.add(p);
         return l;

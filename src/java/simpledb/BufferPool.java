@@ -4,12 +4,8 @@ import java.io.*;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
+import java.util.LinkedList;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReadWriteLock;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 /**
  * BufferPool manages the reading and writing of pages into memory from
@@ -31,6 +27,8 @@ public class BufferPool {
     private int numPages;
     private ConcurrentHashMap<PageId, Page> pageMap;
 
+    private ConcurrentHashMap<TransactionId, ArrayList<PageId>> tPages;
+
     /** Default number of pages passed to the constructor. This is used by
     other classes. BufferPool should use the numPages argument to the
     constructor instead. */
@@ -46,7 +44,8 @@ public class BufferPool {
     public BufferPool(int numPages) {
         // some code goes here
         this.numPages = numPages;
-        pageMap = new ConcurrentHashMap<PageId, Page>();
+        pageMap = new ConcurrentHashMap<>();
+        tPages = new ConcurrentHashMap<>();
         lockmngr = new LockManager();
     }
     
@@ -62,6 +61,13 @@ public class BufferPool {
     // THIS FUNCTION SHOULD ONLY BE USED FOR TESTING!!
     public static void resetPageSize() {
     	BufferPool.pageSize = DEFAULT_PAGE_SIZE;
+    }
+
+    private Page loadPage(PageId pid) {
+        int tableid = pid.getTableId();
+        Catalog catalog = Database.getCatalog();
+        DbFile df = catalog.getDatabaseFile(tableid);
+        return df.readPage(pid);
     }
 
     /**
@@ -83,6 +89,12 @@ public class BufferPool {
         throws TransactionAbortedException, DbException {
         // some code goes here
         lockmngr.acquire(pid, tid, perm);
+
+        tPages.putIfAbsent(tid, new ArrayList<>());
+        // TODO: faster
+        if (!tPages.get(tid).contains(pid) && perm == Permissions.READ_WRITE) {
+            tPages.get(tid).add(pid);
+        }
         
         if (pageMap.containsKey(pid)) {
             return pageMap.get(pid);
@@ -92,10 +104,7 @@ public class BufferPool {
             evictPage();
         }
 
-        int tableid = pid.getTableId();
-        Catalog catalog = Database.getCatalog();
-        DbFile df = catalog.getDatabaseFile(tableid);
-        Page page = df.readPage(pid);
+        Page page = loadPage(pid);
         if (page == null) {
             return null;
         }
@@ -128,6 +137,7 @@ public class BufferPool {
     public void transactionComplete(TransactionId tid) throws IOException {
         // some code goes here
         // not necessary for lab1|lab2
+        transactionComplete(tid, true);
     }
 
     /** Return true if the specified transaction has a lock on the specified page */
@@ -148,6 +158,24 @@ public class BufferPool {
         throws IOException {
         // some code goes here
         // not necessary for lab1|lab2
+        // tests tear down with this call
+        if (!tPages.containsKey(tid)) {
+            return;
+        }
+
+        if (commit) {
+            flushPages(tid);
+        } else {
+            // revert
+            for (PageId pid: tPages.get(tid)) {
+                pageMap.put(pid, loadPage(pid));
+            }
+        }
+
+        for (PageId pid: tPages.get(tid)) {
+            lockmngr.release(pid, tid);
+        }
+        tPages.remove(tid);
     }
 
     /**
@@ -256,12 +284,14 @@ public class BufferPool {
             return;
 
         Page page = pageMap.get(pid);
-        if (page.isDirty() == null)
-            return;
+        // if (page.isDirty() == null)
+        //     return;
 
         Catalog catalog = Database.getCatalog();
         DbFile df = catalog.getDatabaseFile(pid.getTableId());
         df.writePage(page);
+
+        page.markDirty(false, null);
     }
 
     /** Write all pages of the specified transaction to disk.
@@ -269,7 +299,9 @@ public class BufferPool {
     public synchronized  void flushPages(TransactionId tid) throws IOException {
         // some code goes here
         // not necessary for lab1|lab2
-        throw new Error("not implemented");
+        for (PageId pid: tPages.get(tid)) {
+            flushPage(pid);
+        }
     }
 
     /**
@@ -279,19 +311,34 @@ public class BufferPool {
     private synchronized  void evictPage() throws DbException {
         // some code goes here
         // not necessary for lab1
-        PageId pid = pageMap.keys().nextElement();
-        try {
-            flushPage(pid);
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
+        for (ConcurrentHashMap.Entry<PageId, Page> entry: pageMap.entrySet()) {
+            if (entry.getValue().isDirty() != null) {
+                continue;
+            }
 
-        discardPage(pid);
+            PageId pid = entry.getKey();
+            try {
+                flushPage(pid);
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+
+            discardPage(pid);
+            return;
+        }
+        
+        throw new DbException("no clean pages to evict");
     }
 
 }
-class LockManager {
 
+/**
+ * LockManager protects the whole database
+ */
+class LockManager {
+    /**
+     * Latch protects page, thread-safe
+     */
     class Latch {
         PageId pid;
         TransactionId writer;
@@ -302,6 +349,7 @@ class LockManager {
         Latch(PageId pid) {
             this.pid = pid;
             readers = new HashSet<>();
+            debug = false;
         }
 
         private void log(TransactionId tid, int type, boolean toAcquire) {
@@ -320,12 +368,18 @@ class LockManager {
             case 2:
                 lockType = "upgrade lock";
                 break;
+            case 3:
+                lockType = "reentrant lock";
+                break;
+            case 4:
+                lockType = "already got excl lock";
+                break;
             }
 
             if (toAcquire) {
-                System.out.printf("acquired %s on pid:%s for tid:%d\n", lockType, pid, tid.getId());
+                System.out.printf("acquired %s on pgno:%s for tid:%d\n", lockType, pid.getPageNumber(), tid.getId());
             } else {
-                System.out.printf("released %s on pid:%s for tid:%d\n", lockType, pid, tid.getId());
+                System.out.printf("released %s on pgno:%s for tid:%d\n", lockType, pid.getPageNumber(), tid.getId());
             }
         }
 
@@ -349,8 +403,14 @@ class LockManager {
                 return true;
             }
 
-            // reentrant
-            if (writer != null && writer.equals(tid) || readers.contains(tid)) {
+            if (writer != null && writer.equals(tid)) {
+                log(tid, 4, true);
+                return true;
+            }
+
+            // reentrant reader
+            if (readers.contains(tid) && !exclusive) {
+                log(tid, 3, true);
                 return true;
             }
 
@@ -379,31 +439,88 @@ class LockManager {
     }
 
     private HashMap<PageId, Latch> latches;
+    private HashMap<PageId, HashSet<TransactionId>> contenders;
+    private HashMap<TransactionId, HashSet<PageId>> holders;
 
     LockManager() {
         latches = new HashMap<>();
+        contenders = new HashMap<>();
+        holders = new HashMap<>();
     }
 
-    void acquire(PageId pid, TransactionId tid, Permissions perm) {
-        while (!tryAcquire(pid, tid, perm)) {
-
-            // System.out.printf("pid:%s, tid:%d, perm:%s contending\n", pid, tid.getId(), perm);
+    void acquire(PageId pid, TransactionId tid, Permissions perm) throws TransactionAbortedException {
+        for (int i = 0; !tryAcquire(pid, tid, perm);) {
             try {
                 Thread.sleep(10);
             } catch (InterruptedException e) {
                 // just tryAcquire again
             }
+            
+            // timeout 100ms
+            if (i >= 10) {
+                if (tryAbort(pid, tid)) {
+                    // System.out.printf("pid:%s, tid:%d, perm:%s contending too long, abort txn\n",
+                    //     pid.getPageNumber(), tid.getId(), perm);
+                    throw new TransactionAbortedException();
+                }
+                i = 0;
+            }
+
+            i++;
         }
     }
 
+    synchronized void addContender(PageId pid, TransactionId tid) {
+        contenders.putIfAbsent(pid, new HashSet<>());
+        contenders.get(pid).add(tid);
+    }
+
+    synchronized void addHolder(PageId pid, TransactionId tid) {
+        holders.putIfAbsent(tid, new HashSet<>());
+        holders.get(tid).add(pid);
+    }
+
+    synchronized boolean tryAbort(PageId pid, TransactionId tid) {
+        HashSet<TransactionId> txns = contenders.get(pid);
+        TransactionId winner = null;
+        for (TransactionId atid: txns) {
+            // randomly select txn to win
+            if (winner == null) {
+                winner = atid;
+                continue;
+            }
+            for (PageId tpid: holders.get(atid)) {
+                release(tpid, atid);
+            }
+        }
+
+        boolean aborted =  winner != tid;
+
+        txns.clear();
+        txns.add(winner);
+        return aborted;
+    }
+
     synchronized boolean tryAcquire(PageId pid, TransactionId tid, Permissions perm) {
+        addContender(pid, tid);
+
         latches.putIfAbsent(pid, new Latch(pid));
-        return latches.get(pid).acquire(tid, perm == Permissions.READ_WRITE);
+        boolean acquired = latches.get(pid).acquire(tid, perm == Permissions.READ_WRITE);
+        if (acquired) {
+            addHolder(pid, tid);
+            contenders.get(pid).remove(tid);
+        }
+        return acquired;
      }
 
     synchronized boolean release(PageId pid, TransactionId tid) {
         latches.putIfAbsent(pid, new Latch(pid));
-        return latches.get(pid).release(tid);
+        boolean released = latches.get(pid).release(tid);
+        if (released) {
+            // probably too slow
+            holders.get(tid).remove(pid);
+        }
+        return released;
     }
 
     synchronized boolean hasLock(PageId pid, TransactionId tid) {
