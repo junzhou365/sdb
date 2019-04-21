@@ -195,9 +195,34 @@ public class BTreeFile implements DbFile {
 			Field f) 
 					throws DbException, TransactionAbortedException {
 		// some code goes here
-        return null;
+		boolean isLeaf = pid.pgcateg() == BTreePageId.LEAF;
+		Page page = getPage(tid, dirtypages, pid, isLeaf ? perm : Permissions.READ_ONLY);;
+		
+		if (isLeaf) {
+			// The lab instructions don't require confirmation.
+			return (BTreeLeafPage) page;
+		}
+
+		BTreeInternalPage bpage = (BTreeInternalPage) page;
+		Iterator<BTreeEntry> it = bpage.iterator();
+
+		BTreePageId nextPid = null;
+		BTreeEntry entry = null;
+		while (it.hasNext()) {
+			entry = it.next();
+			if (f == null || f.compare(Op.LESS_THAN_OR_EQ, entry.getKey())) {
+				nextPid = entry.getLeftChild();
+				break;
+			}
+		}
+
+		if (nextPid == null) {
+			nextPid = entry.getRightChild();
+		}
+
+        return findLeafPage(tid, dirtypages, nextPid, perm, f);
 	}
-	
+
 	/**
 	 * Convenience method to find a leaf page when there is no dirtypages HashMap.
 	 * Used by the BTreeFile iterator.
