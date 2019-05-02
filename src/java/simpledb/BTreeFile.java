@@ -302,7 +302,7 @@ public class BTreeFile implements DbFile {
 		page.setRightSiblingId(newRight.getId());
 
 		// left if equal
-		if (field.compare(Op.LESS_THAN_OR_EQ, midkey)) {
+		if (field.compare(Op.LESS_THAN, midkey)) {
 			return page;
 		}
         return newRight;
@@ -366,7 +366,7 @@ public class BTreeFile implements DbFile {
 		parent.insertEntry(new BTreeEntry(midkey, page.getId(), newRight.getId()));
 
 		updateParentPointers(tid, dirtypages, newRight);
-		if (field.compare(Op.LESS_THAN_OR_EQ, midkey)) {
+		if (field.compare(Op.LESS_THAN, midkey)) {
 			return page;
 		}
 		return newRight;
