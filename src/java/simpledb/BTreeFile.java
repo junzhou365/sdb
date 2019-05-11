@@ -665,6 +665,29 @@ public class BTreeFile implements DbFile {
         // Move some of the tuples from the sibling to the page so
 		// that the tuples are evenly distributed. Be sure to update
 		// the corresponding parent entry.
+		int m = page.getNumTuples();
+		int sm = sibling.getNumTuples();
+
+		Iterator<Tuple> it = null;
+		if (isRightSibling) {
+			it = sibling.iterator();
+		} else {
+			it = sibling.reverseIterator();
+		}
+		for (int i = 0; i < (sm - m) / 2; i++) {
+			Tuple t = it.next();
+			sibling.deleteTuple(t);
+			page.insertTuple(t);
+		}
+
+		Field updateKey = null;
+		if (!isRightSibling) {
+			updateKey = page.iterator().next().getField(keyField);
+		} else {
+			updateKey = it.next().getField(keyField);
+		}
+		entry.setKey(updateKey);
+		parent.updateEntry(entry);
 	}
 
 	/**
@@ -745,6 +768,25 @@ public class BTreeFile implements DbFile {
 		// that the entries are evenly distributed. Be sure to update
 		// the corresponding parent entry. Be sure to update the parent
 		// pointers of all children in the entries that were moved.
+		int m = page.getNumEntries();
+		int lm = leftSibling.getNumEntries();
+		int mtoDist = lm - (lm + m) / 2;
+
+		BTreePageId leftmostId = page.getChildId(0);
+		Iterator<BTreeEntry> it = leftSibling.reverseIterator();
+		for (int i = 0; i < mtoDist; i++) {
+			Field pkey = parentEntry.getKey();
+			BTreeEntry entry = it.next();
+			leftSibling.deleteKeyAndRightChild(entry);
+			BTreeEntry toi = new BTreeEntry(pkey, entry.getRightChild(), leftmostId);
+			page.insertEntry(toi);
+
+			leftmostId = entry.getRightChild();
+			parentEntry.setKey(entry.getKey());
+		}
+
+		parent.updateEntry(parentEntry);
+		updateParentPointers(tid, dirtypages, page);
 	}
 	
 	/**
@@ -773,6 +815,25 @@ public class BTreeFile implements DbFile {
 		// that the entries are evenly distributed. Be sure to update
 		// the corresponding parent entry. Be sure to update the parent
 		// pointers of all children in the entries that were moved.
+		int m = page.getNumEntries();
+		int rm = rightSibling.getNumEntries();
+		int mtoDist = rm - (rm + m) / 2;
+
+		BTreePageId rightmostId = page.getChildId(m);
+		Iterator<BTreeEntry> it = rightSibling.iterator();
+		for (int i = 0; i < mtoDist; i++) {
+			Field pkey = parentEntry.getKey();
+			BTreeEntry entry = it.next();
+			rightSibling.deleteKeyAndLeftChild(entry);
+			BTreeEntry toi = new BTreeEntry(pkey, rightmostId, entry.getLeftChild());
+			page.insertEntry(toi);
+
+			rightmostId = entry.getLeftChild();
+			parentEntry.setKey(entry.getKey());
+		}
+
+		parent.updateEntry(parentEntry);
+		updateParentPointers(tid, dirtypages, page);
 	}
 	
 	/**
