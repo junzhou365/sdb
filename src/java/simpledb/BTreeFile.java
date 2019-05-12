@@ -295,9 +295,15 @@ public class BTreeFile implements DbFile {
 		BTreeEntry entry = new BTreeEntry(midkey, page.getId(), newRight.getId());
 		parent.insertEntry(entry);
 
-		newRight.setRightSiblingId(page.getRightSiblingId());
+		BTreePageId farpid = page.getRightSiblingId();
+		newRight.setRightSiblingId(farpid);
 		newRight.setLeftSiblingId(page.getId());
 		newRight.setParentId(parent.getId());
+		
+		if (farpid != null) {
+			BTreeLeafPage farpage = (BTreeLeafPage) getPage(tid, dirtypages, farpid, Permissions.READ_WRITE);
+			farpage.setLeftSiblingId(newRight.getId());
+		}
 
 		page.setRightSiblingId(newRight.getId());
 
@@ -306,7 +312,6 @@ public class BTreeFile implements DbFile {
 			return page;
 		}
         return newRight;
-		
 	}
 	
 	/**
@@ -781,7 +786,7 @@ public class BTreeFile implements DbFile {
 			BTreeEntry toi = new BTreeEntry(pkey, entry.getRightChild(), leftmostId);
 			page.insertEntry(toi);
 
-			leftmostId = entry.getRightChild();
+			leftmostId = toi.getLeftChild();
 			parentEntry.setKey(entry.getKey());
 		}
 
@@ -819,16 +824,18 @@ public class BTreeFile implements DbFile {
 		int rm = rightSibling.getNumEntries();
 		int mtoDist = rm - (rm + m) / 2;
 
-		BTreePageId rightmostId = page.getChildId(m);
+		BTreePageId rightmostId = page.reverseIterator().next().getRightChild();
 		Iterator<BTreeEntry> it = rightSibling.iterator();
 		for (int i = 0; i < mtoDist; i++) {
+			
 			Field pkey = parentEntry.getKey();
 			BTreeEntry entry = it.next();
 			rightSibling.deleteKeyAndLeftChild(entry);
 			BTreeEntry toi = new BTreeEntry(pkey, rightmostId, entry.getLeftChild());
 			page.insertEntry(toi);
 
-			rightmostId = entry.getLeftChild();
+
+			rightmostId = toi.getRightChild();
 			parentEntry.setKey(entry.getKey());
 		}
 
@@ -871,10 +878,18 @@ public class BTreeFile implements DbFile {
 			rightPage.deleteTuple(t);
 			leftPage.insertTuple(t);
 		}
+		BTreePageId farRId = rightPage.getRightSiblingId();
+		leftPage.setRightSiblingId(farRId);
+		if (farRId != null) {
+			BTreeLeafPage farpage = (BTreeLeafPage) getPage(tid, dirtypages, farRId, Permissions.READ_WRITE);
+			farpage.setLeftSiblingId(leftPage.getId());
+		}
 
-		leftPage.setRightSiblingId(rightPage.getRightSiblingId());
-		deleteParentEntry(tid, dirtypages, leftPage, parent, parentEntry);
+		rightPage.setLeftSiblingId(null);
+		rightPage.setRightSiblingId(null);
 		setEmptyPage(tid, dirtypages, rightPage.getId().getPageNumber());
+
+		deleteParentEntry(tid, dirtypages, leftPage, parent, parentEntry);
 	}
 
 	/**
@@ -909,8 +924,7 @@ public class BTreeFile implements DbFile {
 		// Delete the entry in the parent corresponding to the two pages that are merging -
 		// deleteParentEntry() will be useful here
 		Iterator<BTreeEntry> it = rightPage.iterator();
-		int m = leftPage.getNumEntries();
-		BTreePageId rightmostId = leftPage.getChildId(m);
+		BTreePageId rightmostId = leftPage.reverseIterator().next().getRightChild();
 
 		Field key = parentEntry.getKey();
 		BTreeEntry toen = new BTreeEntry(key, rightmostId, null);
