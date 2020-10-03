@@ -3,8 +3,6 @@ package simpledb;
 import java.util.ArrayList;
 import java.util.Arrays;
 
-import jdk.internal.dynalink.support.BottomGuardingDynamicLinker;
-
 /** A class to represent a fixed-width histogram over a single integer-based field.
  */
 public class IntHistogram {
